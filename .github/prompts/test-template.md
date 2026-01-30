@@ -188,3 +188,4 @@ await page.waitForURL((url) => url.toString().includes("/target/"), { timeout: 5
 3. Skip tests gracefully when section has no data
 4. Avoid hardcoded timeouts; use proper waits instead
 5. Tests should pass on the staging environment
+6. Make sure any imports from the interactors are valid imports
