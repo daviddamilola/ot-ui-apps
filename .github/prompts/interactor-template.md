@@ -101,3 +101,5 @@ Use these patterns for data-testid selectors:
 3. Return Promises for action methods
 4. Include error handling with `.catch()` for optional elements
 5. Add appropriate timeouts for dynamic content
+6. Make sure any imports are valid imports
+7. When using a data-testid, make sure they are added to the component being used and that they will eventually be rendered in the dom.
