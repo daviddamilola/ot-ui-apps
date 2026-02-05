@@ -59,8 +59,8 @@ jobs:
       - name: Detect new widgets
         id: detect
         run: |
-          cd packages/test-generator
-          node dist/cli.js detect \
+          # Run from workspace root so git paths resolve correctly
+          node packages/test-generator/dist/cli.js detect \
             --base-branch ${{ env.BASE_BRANCH }} \
             --output-file /tmp/widgets.json \
             --verbose
@@ -85,8 +85,8 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          cd packages/test-generator
-          node dist/cli.js generate \
+          # Run from workspace root so file paths resolve correctly
+          node packages/test-generator/dist/cli.js generate \
             --widgets-file /tmp/widgets.json \
             --verbose
 
