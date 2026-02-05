@@ -2,6 +2,15 @@ name: "Auto-Generate Tests for New Widgets"
 
 on:
   workflow_dispatch:
+    inputs:
+      target_branch:
+        description: 'Branch to generate tests for (and create PR against)'
+        required: true
+        type: string
+      pr_number:
+        description: 'Original PR number (optional, for linking in comments)'
+        required: false
+        type: string
 
 jobs:
   detect-and-generate:
@@ -15,7 +24,7 @@ jobs:
       - name: Checkout PR branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref }}
+          ref: ${{ inputs.target_branch }}
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -65,7 +74,7 @@ jobs:
           git config --local user.name "github-actions[bot]"
           
           # Create a new branch for generated tests
-          GENERATED_BRANCH="auto-tests/${{ github.head_ref }}-${{ github.run_number }}"
+          GENERATED_BRANCH="auto-tests/${{ inputs.target_branch }}-${{ github.run_number }}"
           git checkout -b "$GENERATED_BRANCH"
           
           git add ${{ github.workspace }}/packages/platform-test/
@@ -81,7 +90,8 @@ jobs:
         with:
           script: |
             const generatedBranch = '${{ steps.create_pr.outputs.generated_branch }}';
-            const targetBranch = '${{ github.head_ref }}';
+            const targetBranch = '${{ inputs.target_branch }}';
+            const prNumber = '${{ inputs.pr_number }}';
             
             // Create PR from generated tests branch to the original PR branch
             const pr = await github.rest.pulls.create({
@@ -90,7 +100,7 @@ jobs:
               title: '🤖 Auto-generated tests for ' + targetBranch,
               head: generatedBranch,
               base: targetBranch,
-              body: `## 🤖 Auto-Generated Tests\n\nThis PR contains auto-generated tests, interactors, and fixture updates for new widgets detected in #${{ github.event.pull_request.number }}.\n\n### Generated Files:\n- Interactors in \`packages/platform-test/POM/objects/widgets/\`\n- Test specs in \`packages/platform-test/e2e/pages/\`\n- Fixture updates in \`packages/platform-test/fixtures/testConfig.ts\`\n\n> **Note:** Please review the generated tests and adjust as needed. The LLM-generated code may require fine-tuning based on actual component behavior and data availability.\n\n---\n_Merge this PR to add the generated tests to your branch._`
+              body: `## 🤖 Auto-Generated Tests\n\nThis PR contains auto-generated tests, interactors, and fixture updates for new widgets${prNumber ? ' detected in #' + prNumber : ''}.\n\n### Generated Files:\n- Interactors in \`packages/platform-test/POM/objects/widgets/\`\n- Test specs in \`packages/platform-test/e2e/pages/\`\n- Fixture updates in \`packages/platform-test/fixtures/testConfig.ts\`\n\n> **Note:** Please review the generated tests and adjust as needed. The LLM-generated code may require fine-tuning based on actual component behavior and data availability.\n\n---\n_Merge this PR to add the generated tests to your branch._`
             });
             
             core.setOutput('pr_number', pr.data.number);
@@ -98,7 +108,7 @@ jobs:
             return pr.data;
 
       - name: Comment on original PR with link
-        if: steps.check_files.outputs.has_changes == 'true'
+        if: steps.check_files.outputs.has_changes == 'true' && inputs.pr_number != ''
         uses: actions/github-script@v7
         with:
           script: |
@@ -106,9 +116,10 @@ jobs:
             const widgetList = newWidgets.map(w => `- **${w.name}** (${w.entity})`).join('\n');
             const testPrUrl = '${{ steps.create_test_pr.outputs.pr_url }}';
             const testPrNumber = '${{ steps.create_test_pr.outputs.pr_number }}';
+            const originalPrNumber = parseInt('${{ inputs.pr_number }}', 10);
             
             github.rest.issues.createComment({
-              issue_number: context.issue.number,
+              issue_number: originalPrNumber,
               owner: context.repo.owner,
               repo: context.repo.repo,
               body: `## 🤖 Auto-Generated Tests Available\n\nI detected the following new widgets/sections and generated tests for them:\n\n${widgetList}\n\n### 📋 Review & Merge Generated Tests\n\nA separate PR has been created with the generated tests:\n\n**➡️ [PR #${testPrNumber}: Auto-generated tests](${testPrUrl})**\n\nPlease review the generated code and merge that PR into this branch to include the tests.\n\n### Generated Files:\n- Interactors in \`packages/platform-test/POM/objects/widgets/\`\n- Test specs in \`packages/platform-test/e2e/pages/\`\n- Fixture updates in \`packages/platform-test/fixtures/testConfig.ts\`\n\n> **Note:** The LLM-generated code may require fine-tuning based on actual component behavior and data availability.`
