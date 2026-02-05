@@ -20,9 +20,23 @@ const TEST_OUTPUT_PATH = 'packages/platform-test/e2e/pages';
 const FIXTURES_PATH = 'packages/platform-test/fixtures/testConfig.ts';
 
 /**
- * Call Anthropic Claude API
+ * Call Anthropic Claude API with optional extended thinking
  */
-async function callClaude(systemPrompt, userPrompt, maxTokens = MAX_TOKENS) {
+async function callClaude(systemPrompt, userPrompt, maxTokens = MAX_TOKENS, useExtendedThinking = false) {
+  const requestBody = {
+    model: MODEL,
+    max_tokens: maxTokens,
+    system: systemPrompt,
+    messages: [
+      { role: 'user', content: userPrompt }
+    ]
+  };
+
+  // Add temperature for more deterministic outputs in code generation
+  if (!useExtendedThinking) {
+    requestBody.temperature = 0.2;
+  }
+
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -30,14 +44,7 @@ async function callClaude(systemPrompt, userPrompt, maxTokens = MAX_TOKENS) {
       'x-api-key': ANTHROPIC_API_KEY,
       'anthropic-version': '2023-06-01'
     },
-    body: JSON.stringify({
-      model: MODEL,
-      max_tokens: maxTokens,
-      system: systemPrompt,
-      messages: [
-        { role: 'user', content: userPrompt }
-      ]
-    })
+    body: JSON.stringify(requestBody)
   });
 
   if (!response.ok) {
@@ -103,30 +110,24 @@ function loadExamples() {
 }
 
 /**
- * Generate interactor for a widget
+ * Analyze widget code to understand its structure
  */
-async function generateInteractor(widget, examples) {
-  const interactorTemplate = loadPromptTemplate('interactor-template');
-  
-  const systemPrompt = `You are an expert TypeScript developer specializing in Playwright Page Object Model (POM) patterns. 
-You generate clean, well-documented interactor classes for UI testing.
-Your code should follow these principles:
-- Use TypeScript with proper types
-- Follow the existing naming conventions and patterns
-- Include comprehensive methods for common interactions
-- Use data-testid selectors when possible
-- Include JSDoc comments for methods`;
+async function analyzeWidget(widget) {
+  const systemPrompt = `You are an expert code analyst specializing in React components and UI testing.
+Your task is to carefully analyze React component code and identify exactly what UI elements are present.
+Be precise and thorough. Do NOT assume elements exist if they are not explicitly in the code.`;
 
-  const userPrompt = `${interactorTemplate || ''}
-
-## Task
-Generate a Playwright interactor class for the following widget/section.
+  const userPrompt = `## Task
+Carefully analyze the following React widget/section code and identify:
+1. What UI components are actually rendered (tables, charts, forms, links, buttons, etc.)
+2. What interactions are possible (clicking, filtering, searching, pagination, etc.)
+3. What data-testid attributes already exist in the code
+4. What data-testid attributes should be added for testing
 
 ## Widget Information
 - **Name**: ${widget.name}
 - **Entity**: ${widget.entity}
 - **Section ID**: ${widget.id || widget.name.toLowerCase()}
-- **Display Name**: ${widget.displayName || widget.name}
 
 ## Widget Source Code
 
@@ -135,37 +136,211 @@ Generate a Playwright interactor class for the following widget/section.
 ${widget.sources?.index || 'Not available'}
 \`\`\`
 
+### Body.tsx (or Body.jsx)
+\`\`\`typescript
+${widget.sources?.Body || 'Not available'}
+\`\`\`
+
+### Summary.tsx (or Summary.jsx)
+\`\`\`typescript
+${widget.sources?.Summary || 'Not available'}
+\`\`\`
+
+## Instructions
+Think step by step:
+
+1. **Identify UI Components**: List each UI component used (e.g., OtTable, Link, Tooltip, Chart, etc.)
+2. **Has Table?**: Does this widget use OtTable, Table, or any table component? (true/false)
+3. **Has Chart?**: Does this widget render a chart or visualization? (true/false)
+4. **Has Search/Filter?**: Does this widget have search or filter functionality? (true/false)
+5. **Has Pagination?**: Does this widget have pagination controls? (true/false)
+6. **Has External Links?**: Does this widget render external links? (true/false)
+7. **Custom Interactions**: List any widget-specific interactions (e.g., 3D viewer, expandable sections, etc.)
+8. **Existing data-testid**: List any data-testid attributes already in the code
+9. **Missing data-testid**: List data-testid attributes that should be added for better testability
+
+Output your analysis as JSON in this exact format:
+\`\`\`json
+{
+  "uiComponents": ["list", "of", "components"],
+  "hasTable": true/false,
+  "hasChart": true/false,
+  "hasSearch": true/false,
+  "hasPagination": true/false,
+  "hasExternalLinks": true/false,
+  "hasDownloader": true/false,
+  "customInteractions": ["list", "of", "interactions"],
+  "existingTestIds": ["list", "of", "existing", "testids"],
+  "suggestedTestIds": [
+    {"element": "element description", "testId": "suggested-test-id", "reason": "why it's needed"}
+  ],
+  "reasoning": "Brief explanation of your analysis"
+}
+\`\`\``;
+
+  const response = await callClaude(systemPrompt, userPrompt, 2048);
+  
+  // Extract JSON from response
+  let analysis = {};
+  const jsonMatch = response.match(/```json\n([\s\S]*?)```/);
+  if (jsonMatch) {
+    try {
+      analysis = JSON.parse(jsonMatch[1].trim());
+    } catch (e) {
+      console.warn('  ⚠️ Could not parse widget analysis:', e.message);
+      // Default analysis if parsing fails
+      analysis = {
+        hasTable: widget.sources?.Body?.includes('OtTable') || widget.sources?.Body?.includes('Table'),
+        hasChart: widget.sources?.Body?.includes('Chart') || widget.sources?.Body?.includes('Plot'),
+        hasSearch: widget.sources?.Body?.includes('showGlobalFilter') || widget.sources?.Body?.includes('Search'),
+        hasPagination: widget.sources?.Body?.includes('pagination') || widget.sources?.Body?.includes('Pagination'),
+        hasExternalLinks: widget.sources?.Body?.includes('Link external'),
+        hasDownloader: widget.sources?.Body?.includes('dataDownloader'),
+        customInteractions: [],
+        existingTestIds: [],
+        suggestedTestIds: [],
+        reasoning: 'Fallback analysis based on keyword matching'
+      };
+    }
+  }
+  
+  return analysis;
+}
+
+/**
+ * Generate data-testid suggestions for the widget source code
+ */
+async function generateDataTestIdSuggestions(widget, analysis) {
+  if (!analysis.suggestedTestIds || analysis.suggestedTestIds.length === 0) {
+    return null;
+  }
+
+  const systemPrompt = `You are an expert React developer who adds data-testid attributes for testing.
+You output precise code changes that add data-testid attributes to existing React components.`;
+
+  const userPrompt = `## Task
+Generate code changes to add the following data-testid attributes to the widget's Body component.
+
+## Widget: ${widget.name}
+## Section ID: ${widget.id || widget.name.toLowerCase()}
+
+## Suggested data-testid additions:
+${JSON.stringify(analysis.suggestedTestIds, null, 2)}
+
+## Current Body.tsx code:
+\`\`\`typescript
+${widget.sources?.Body || 'Not available'}
+\`\`\`
+
+## Instructions
+For each suggested data-testid, provide the exact code change needed.
+Output a JSON array of changes in this format:
+
+\`\`\`json
+{
+  "changes": [
+    {
+      "description": "What this change does",
+      "originalCode": "The exact original code snippet to find",
+      "newCode": "The new code with data-testid added"
+    }
+  ]
+}
+\`\`\`
+
+If a data-testid cannot be reasonably added (e.g., the element doesn't exist), skip it.
+Only output the JSON, no explanations.`;
+
+  const response = await callClaude(systemPrompt, userPrompt, 2048);
+  
+  const jsonMatch = response.match(/```json\n([\s\S]*?)```/);
+  if (jsonMatch) {
+    try {
+      return JSON.parse(jsonMatch[1].trim());
+    } catch (e) {
+      console.warn('  ⚠️ Could not parse data-testid suggestions:', e.message);
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Generate interactor for a widget using chain-of-thought analysis
+ */
+async function generateInteractor(widget, examples, analysis) {
+  const interactorTemplate = loadPromptTemplate('interactor-template');
+  
+  const systemPrompt = `You are an expert TypeScript developer specializing in Playwright Page Object Model (POM) patterns. 
+You generate clean, well-documented interactor classes for UI testing.
+
+CRITICAL RULES:
+- ONLY generate methods for UI elements that ACTUALLY EXIST in the widget
+- If there is NO table in the widget, do NOT generate table methods
+- If there is NO search functionality, do NOT generate search methods
+- If there is NO pagination, do NOT generate pagination methods
+- Base your interactor ONLY on the provided analysis and source code
+- Do NOT copy methods from examples that don't apply to this widget`;
+
+  const userPrompt = `${interactorTemplate || ''}
+
+## Task
+Generate a Playwright interactor class for the following widget/section.
+IMPORTANT: Only include methods for UI elements that actually exist in this widget.
+
+## Widget Information
+- **Name**: ${widget.name}
+- **Entity**: ${widget.entity}
+- **Section ID**: ${widget.id || widget.name.toLowerCase()}
+- **Display Name**: ${widget.displayName || widget.name}
+
+## Widget Analysis (from code inspection)
+\`\`\`json
+${JSON.stringify(analysis, null, 2)}
+\`\`\`
+
+## Widget Source Code
+
 ### Body.tsx
 \`\`\`typescript
 ${widget.sources?.Body || 'Not available'}
 \`\`\`
 
-### Summary.tsx
-\`\`\`typescript
-${widget.sources?.Summary || 'Not available'}
-\`\`\`
+## Example Interactor for reference (DO NOT copy methods that don't apply):
 
-## Example Interactor (KnownDrugs)
+### Example with Table (OtTable):
 \`\`\`typescript
 ${examples.interactor}
 \`\`\`
 
-## Example Interactor (Ontology)
+### Example without Table (if applicable):
 \`\`\`typescript
 ${examples.interactorOntology || ''}
 \`\`\`
 
+## Step-by-Step Generation Process
+
+Think through this carefully:
+
+1. **Section container**: Always include getSection() and isSectionVisible()
+2. **Section header**: Always include getSectionHeader() and getSectionTitle()
+3. **Wait for load**: Always include waitForSectionLoad()
+
+Now, based on the analysis:
+
+4. **Table methods**: ${analysis.hasTable ? 'YES - Include table methods (getTable, getTableRows, getRowCount, etc.)' : 'NO - Do NOT include any table methods'}
+5. **Search methods**: ${analysis.hasSearch ? 'YES - Include search methods' : 'NO - Do NOT include search methods'}
+6. **Pagination methods**: ${analysis.hasPagination ? 'YES - Include pagination methods' : 'NO - Do NOT include pagination methods'}
+7. **Chart methods**: ${analysis.hasChart ? 'YES - Include chart methods (getChart, isChartVisible, etc.)' : 'NO - Do NOT include chart methods'}
+8. **External link methods**: ${analysis.hasExternalLinks ? 'YES - Include external link methods' : 'NO - Do NOT include external link methods'}
+9. **Download methods**: ${analysis.hasDownloader ? 'YES - Include download button method' : 'NO - Do NOT include download methods'}
+10. **Custom interactions**: ${analysis.customInteractions?.length > 0 ? `Include methods for: ${analysis.customInteractions.join(', ')}` : 'No custom interactions needed'}
+
 ## Requirements
 1. Create a class named \`${widget.name}Section\`
 2. Use data-testid selectors based on the section id: \`section-${widget.id || widget.name.toLowerCase()}\`
-3. Include methods for:
-   - Getting the section container
-   - Checking section visibility
-   - Getting section header
-   - Interacting with any tables (if present)
-   - Any widget-specific interactions based on the Body component
-   - Waiting for section to load
-4. Follow the exact pattern from the examples
+3. ONLY include methods that correspond to actual UI elements in the widget
+4. Follow TypeScript best practices with proper types
 5. Only output the TypeScript code, no explanations
 
 Generate the complete interactor class:`;
@@ -183,31 +358,38 @@ Generate the complete interactor class:`;
 }
 
 /**
- * Generate test file for a widget
+ * Generate test file for a widget using chain-of-thought analysis
  */
-async function generateTest(widget, examples, interactorCode) {
+async function generateTest(widget, examples, interactorCode, analysis) {
   const testTemplate = loadPromptTemplate('test-template');
   
   const systemPrompt = `You are an expert QA engineer specializing in Playwright end-to-end testing.
 You write comprehensive, maintainable test suites that follow best practices.
-Your tests should:
-- Be independent and isolated
-- Have clear, descriptive test names
-- Use proper assertions
-- Follow the AAA pattern (Arrange, Act, Assert)
-- Include appropriate waits for async operations
-- Use the testConfig fixture for test data instead of hardcoded values`;
+
+CRITICAL RULES:
+- ONLY write tests for UI elements that ACTUALLY EXIST in the widget
+- If there is NO table, do NOT write table tests
+- If there is NO search, do NOT write search tests
+- If there is NO pagination, do NOT write pagination tests
+- Base your tests ONLY on the provided analysis and interactor code
+- Do NOT copy test patterns from examples that don't apply`;
 
   const userPrompt = `${testTemplate || ''}
 
 ## Task
 Generate a Playwright test file for the following widget/section.
+IMPORTANT: Only write tests for features that actually exist in this widget.
 
 ## Widget Information
 - **Name**: ${widget.name}
 - **Entity**: ${widget.entity}
 - **Section ID**: ${widget.id || widget.name.toLowerCase()}
 - **Display Name**: ${widget.displayName || widget.name}
+
+## Widget Analysis (from code inspection)
+\`\`\`json
+${JSON.stringify(analysis, null, 2)}
+\`\`\`
 
 ## Widget Source Code
 
@@ -216,12 +398,12 @@ Generate a Playwright test file for the following widget/section.
 ${widget.sources?.Body || 'Not available'}
 \`\`\`
 
-## Generated Interactor
+## Generated Interactor (use only methods defined here)
 \`\`\`typescript
 ${interactorCode}
 \`\`\`
 
-## Example Test File (uses fixtures)
+## Example Test File (for reference only - DO NOT copy tests that don't apply)
 \`\`\`typescript
 ${examples.test}
 \`\`\`
@@ -230,6 +412,23 @@ ${examples.test}
 \`\`\`typescript
 ${examples.fixtures}
 \`\`\`
+
+## Step-by-Step Test Generation
+
+Think through which tests to include based on the analysis:
+
+1. **Basic visibility test**: Always include - tests that section is visible
+2. **Section header test**: Always include - tests that header exists
+
+Now, based on the analysis:
+
+3. **Table tests**: ${analysis.hasTable ? 'YES - Test that table is visible and has rows' : 'NO - Skip table tests'}
+4. **Chart tests**: ${analysis.hasChart ? 'YES - Test that chart/visualization is visible' : 'NO - Skip chart tests'}
+5. **Search tests**: ${analysis.hasSearch ? 'YES - Test search functionality' : 'NO - Skip search tests'}
+6. **Pagination tests**: ${analysis.hasPagination ? 'YES - Test pagination' : 'NO - Skip pagination tests'}
+7. **External link tests**: ${analysis.hasExternalLinks ? 'YES - Test external links' : 'NO - Skip link tests'}
+8. **Download tests**: ${analysis.hasDownloader ? 'YES - Test download button' : 'NO - Skip download tests'}
+9. **Custom interaction tests**: ${analysis.customInteractions?.length > 0 ? `Test: ${analysis.customInteractions.join(', ')}` : 'No custom interaction tests'}
 
 ## Requirements
 1. Import test and expect from "../../../fixtures" (NOT from @playwright/test)
@@ -241,10 +440,7 @@ ${examples.fixtures}
    - Use testConfig fixture to get entity IDs (e.g., testConfig.${widget.entity}.primary or testConfig.${widget.entity}.with${widget.name})
    - Navigate to the entity page
    - Wait for section to load, skip if section not visible
-6. Include tests for:
-   - Section visibility
-   - Main content/table is visible (if applicable)
-   - Any interactive elements work correctly
+6. ONLY include tests for features that exist based on the analysis
 7. For the interactor import path:
    - If it's a shared widget (used by multiple entities), use: "../../../POM/objects/widgets/shared/${widget.name.toLowerCase()}Section"
    - Otherwise use: "../../../POM/objects/widgets/${widget.name}/${widget.name.toLowerCase()}Section"
@@ -406,6 +602,44 @@ function applyFixtureUpdates(fixtureUpdates) {
 
 
 /**
+ * Apply data-testid changes to widget source files
+ */
+function applyDataTestIdChanges(widget, testIdChanges) {
+  if (!testIdChanges?.changes || testIdChanges.changes.length === 0) {
+    return { applied: 0, failed: 0 };
+  }
+
+  let applied = 0;
+  let failed = 0;
+
+  // Determine the Body file path
+  const bodyPath = widget.sourcePaths?.Body;
+  if (!bodyPath || !fs.existsSync(bodyPath)) {
+    console.warn(`    ⚠️ Could not find Body file to apply data-testid changes`);
+    return { applied: 0, failed: testIdChanges.changes.length };
+  }
+
+  let content = fs.readFileSync(bodyPath, 'utf-8');
+
+  for (const change of testIdChanges.changes) {
+    if (content.includes(change.originalCode)) {
+      content = content.replace(change.originalCode, change.newCode);
+      console.log(`    ✓ Applied: ${change.description}`);
+      applied++;
+    } else {
+      console.warn(`    ✗ Could not apply: ${change.description}`);
+      failed++;
+    }
+  }
+
+  if (applied > 0) {
+    fs.writeFileSync(bodyPath, content);
+  }
+
+  return { applied, failed };
+}
+
+/**
  * Write generated files to disk
  */
 function writeGeneratedFiles(widget, interactorCode, testCode) {
@@ -504,18 +738,53 @@ async function main() {
   const results = [];
 
   for (const widget of widgetsToProcess) {
-    console.log(`\n🔧 Generating tests for: ${widget.name} (${widget.entity})`);
+    console.log(`\n🔧 Processing: ${widget.name} (${widget.entity})`);
 
     try {
-      // Generate interactor
+      // Step 1: Analyze widget code
+      console.log('  🔍 Analyzing widget code...');
+      const analysis = await analyzeWidget(widget);
+      console.log(`    - Has table: ${analysis.hasTable}`);
+      console.log(`    - Has chart: ${analysis.hasChart}`);
+      console.log(`    - Has search: ${analysis.hasSearch}`);
+      console.log(`    - Has pagination: ${analysis.hasPagination}`);
+      console.log(`    - Has external links: ${analysis.hasExternalLinks}`);
+      console.log(`    - Has downloader: ${analysis.hasDownloader}`);
+      if (analysis.customInteractions?.length > 0) {
+        console.log(`    - Custom interactions: ${analysis.customInteractions.join(', ')}`);
+      }
+      if (analysis.reasoning) {
+        console.log(`    - Analysis: ${analysis.reasoning}`);
+      }
+
+      // Step 2: Generate data-testid suggestions and optionally apply them
+      if (analysis.suggestedTestIds?.length > 0) {
+        console.log(`  📋 Suggested data-testid additions: ${analysis.suggestedTestIds.length}`);
+        const testIdChanges = await generateDataTestIdSuggestions(widget, analysis);
+        if (testIdChanges?.changes?.length > 0) {
+          // Apply data-testid changes if APPLY_DATA_TESTIDS env var is set
+          if (process.env.APPLY_DATA_TESTIDS === 'true') {
+            console.log(`  🔧 Applying data-testid changes...`);
+            const { applied, failed } = applyDataTestIdChanges(widget, testIdChanges);
+            console.log(`    Applied: ${applied}, Failed: ${failed}`);
+          } else {
+            console.log(`    ⚠️ Widget may need data-testid additions for better testability`);
+            console.log(`    Set APPLY_DATA_TESTIDS=true to auto-apply suggested changes`);
+          }
+          // Store for potential future use
+          widget.suggestedTestIdChanges = testIdChanges;
+        }
+      }
+
+      // Step 3: Generate interactor based on analysis
       console.log('  📝 Generating interactor...');
-      const interactorCode = await generateInteractor(widget, examples);
+      const interactorCode = await generateInteractor(widget, examples, analysis);
 
-      // Generate test (now includes fixture context)
+      // Step 4: Generate test based on analysis
       console.log('  📝 Generating test file...');
-      const testCode = await generateTest(widget, examples, interactorCode);
+      const testCode = await generateTest(widget, examples, interactorCode, analysis);
 
-      // Write files
+      // Step 5: Write files
       console.log('  💾 Writing files...');
       const paths = writeGeneratedFiles(widget, interactorCode, testCode);
       
@@ -523,6 +792,13 @@ async function main() {
         widget: widget.name,
         entity: widget.entity,
         success: true,
+        analysis: {
+          hasTable: analysis.hasTable,
+          hasChart: analysis.hasChart,
+          hasSearch: analysis.hasSearch,
+          hasPagination: analysis.hasPagination,
+          customInteractions: analysis.customInteractions
+        },
         ...paths
       });
 

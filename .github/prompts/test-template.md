@@ -2,6 +2,21 @@
 
 You are generating Playwright end-to-end tests for the Open Targets Platform.
 
+## CRITICAL: Chain-of-Thought Analysis Required
+
+Before generating ANY tests, you MUST:
+1. Read the provided widget analysis JSON carefully
+2. Review the interactor code to see what methods are available
+3. Only write tests for features that ACTUALLY EXIST
+4. Do NOT copy tests from examples if the widget doesn't have those features
+
+**DO NOT:**
+- Write table tests if the widget has no table (`hasTable: false`)
+- Write search tests if there's no search (`hasSearch: false`)
+- Write pagination tests if there's no pagination (`hasPagination: false`)
+- Write chart tests if there's no chart (`hasChart: false`)
+- Copy test patterns from examples that don't match this widget's features
+
 ## Context
 
 The Open Targets Platform displays scientific data about:
@@ -58,42 +73,55 @@ test.describe("[Widget Display Name] Section", () => {
     // Check if section is visible, skip if not
     const isVisible = await [widget]Section.isSectionVisible();
     if (isVisible) {
-      await [widget]Section.waitForLoad();
+      await [widget]Section.waitForSectionLoad();
     } else {
       test.skip();
     }
   });
 
+  // ALWAYS include this test
   test("Section is visible when data available", async () => {
     const isVisible = await [widget]Section.isSectionVisible();
     expect(isVisible).toBe(true);
   });
 
-  // Add widget-specific tests...
+  // ONLY add tests below if the feature exists based on analysis
 });
 ```
 
-## Test Categories
+## Conditional Tests (ONLY include if feature exists)
 
-### Visibility Tests
-- Section container is visible
-- Main content area is visible
-- Loading states resolve correctly (skip test if no data)
+### If hasTable is true:
+```typescript
+test("Table is visible with data", async () => {
+  const rows = await [widget]Section.getTableRows();
+  expect(rows.length).toBeGreaterThan(0);
+});
+```
 
-### Content Tests
-- Data is displayed (tables have rows, charts render)
-- Correct labels/headers are shown
-- Links are present and valid
+### If hasChart is true:
+```typescript
+test("Chart/visualization is visible", async () => {
+  const isChartVisible = await [widget]Section.isChartVisible();
+  expect(isChartVisible).toBe(true);
+});
+```
 
-### Interaction Tests
-- Search/filter functionality works
-- Pagination works
-- Sorting works (if applicable)
-- Expandable sections expand/collapse
-- External links have correct href
+### If hasSearch is true:
+```typescript
+test("Search filters results", async () => {
+  await [widget]Section.search("test term");
+  // Verify filtered results
+});
+```
 
-### Edge Cases
-- Skip test if section is not visible (no data available)
+### If hasExternalLinks is true:
+```typescript
+test("External links are present", async () => {
+  const links = await [widget]Section.getExternalLinks();
+  expect(links.length).toBeGreaterThan(0);
+});
+```
 
 ## TestConfig Structure
 
@@ -102,31 +130,23 @@ The `testConfig` fixture provides entity IDs for testing:
 ```typescript
 interface TestConfig {
   drug: {
-    primary: string;           // Drug with comprehensive data
-    alternatives?: {
-      withWarnings: string;
-      withAdverseEvents: string;
-    };
+    primary: string;
+    alternatives?: { ... };
   };
   variant: {
-    primary: string;           // Variant with general data
-    withMolecularStructure: string;
-    withPharmacogenomics: string;
-    withQTL?: string;
-    withEVA?: string;
+    primary: string;
+    withMolecularStructure?: string;
+    withPharmacogenomics?: string;
+    // widget-specific IDs
   };
   target?: {
     primary?: string;
-    alternatives?: string[];
   };
   disease: {
     primary: string;
-    name?: string;
-    alternatives?: string[];
   };
   study: {
     gwas: { primary: string; };
-    qtl?: { primary?: string; };
   };
 }
 ```
@@ -142,44 +162,8 @@ When a widget needs specific data, use the pattern:
 3. **Skip Gracefully**: If section isn't visible, skip the test
 4. **Test Independence**: Each test should be able to run independently
 5. **Descriptive Names**: Test names should describe what is being tested
-6. **Proper Waits**: Use `waitForLoad()` before assertions
-
-## Assertions
-
-Use Playwright's `expect` (imported from fixtures) for assertions:
-
-```typescript
-// Visibility
-expect(await section.isSectionVisible()).toBe(true);
-await expect(locator).toBeVisible();
-
-// Text content
-await expect(locator).toHaveText("expected text");
-await expect(locator).toContainText("partial text");
-
-// Count
-const rowCount = await section.getTableRows();
-expect(rowCount).toBeGreaterThan(0);
-
-// Attributes
-await expect(locator).toHaveAttribute("href", expectedUrl);
-
-// Navigation
-await page.waitForURL((url) => url.toString().includes("/disease/"), { timeout: 5000 });
-expect(page.url()).toContain("/disease/");
-```
-
-## Navigation Patterns
-
-```typescript
-// Use Page classes with testConfig
-await drugPage.goToDrugPage(testConfig.drug.primary);
-await variantPage.goToVariantPage(testConfig.variant.withEVA ?? testConfig.variant.primary);
-await diseasePage.goToDiseasePage(testConfig.disease.primary);
-
-// Wait for navigation after click
-await page.waitForURL((url) => url.toString().includes("/target/"), { timeout: 5000 });
-```
+6. **Proper Waits**: Use `waitForSectionLoad()` before assertions
+7. **Match Features to Tests**: Only test what actually exists in the widget
 
 ## Important Notes
 
@@ -188,3 +172,4 @@ await page.waitForURL((url) => url.toString().includes("/target/"), { timeout: 5
 3. Skip tests gracefully when section has no data
 4. Avoid hardcoded timeouts; use proper waits instead
 5. Tests should pass on the staging environment
+6. **ONLY write tests for features that exist in the widget based on the analysis**

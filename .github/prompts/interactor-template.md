@@ -2,6 +2,21 @@
 
 You are generating a Page Object Model (POM) interactor class for the Open Targets Platform.
 
+## CRITICAL: Chain-of-Thought Analysis Required
+
+Before generating ANY code, you MUST:
+1. Carefully read the widget's Body component code
+2. Identify ONLY the UI components that are actually present
+3. List exactly what elements exist (tables, charts, forms, links, buttons)
+4. Generate methods ONLY for elements that exist
+
+**DO NOT:**
+- Copy methods from examples if the widget doesn't have those elements
+- Add table methods if there's no table component (OtTable, Table, etc.)
+- Add search methods if there's no search functionality
+- Add pagination methods if there's no pagination
+- Assume any functionality that isn't explicitly in the code
+
 ## Context
 
 The Open Targets Platform is a drug discovery tool that displays scientific data about targets, diseases, drugs, and evidence. Each entity page has multiple "sections" or "widgets" that display specific types of data.
@@ -20,7 +35,7 @@ export class [WidgetName]Section {
     this.page = page;
   }
 
-  // Section container - uses data-testid
+  // ALWAYS INCLUDE: Section container - uses data-testid
   getSection(): Locator {
     return this.page.locator("[data-testid='section-[sectionId]']");
   }
@@ -29,7 +44,7 @@ export class [WidgetName]Section {
     return await this.getSection().isVisible();
   }
 
-  // Section header
+  // ALWAYS INCLUDE: Section header
   getSectionHeader(): Locator {
     return this.page.locator("[data-testid='section-[sectionId]-header']");
   }
@@ -38,44 +53,43 @@ export class [WidgetName]Section {
     return await this.getSectionHeader().textContent();
   }
 
-  // ... widget-specific methods based on the Body component
-
-  // Wait for section to load
+  // ALWAYS INCLUDE: Wait for section to load
   async waitForSectionLoad(): Promise<void> {
     await this.getSection().waitFor({ state: "visible" });
-    // Add any additional waits for dynamic content
   }
+
+  // ONLY add methods below if the corresponding UI element EXISTS in the widget
 }
 ```
 
-## Common Patterns
+## Conditional Patterns (ONLY include if element exists)
 
-### For sections with tables:
+### For sections with OtTable (check for `<OtTable` or `OtTable` import):
 - `getTable()` - returns table locator
-- `getTableRows()` - returns all table body rows
+- `getTableRows()` - returns all table body rows  
 - `getRowCount()` - returns number of rows
 - `getCell(rowIndex, columnIndex)` - returns specific cell
 
-### For sections with search/filter:
+### For sections with search/filter (check for `showGlobalFilter` or search input):
 - `getSearchInput()` - returns search input locator
 - `search(term)` - performs search action
 - `clearSearch()` - clears search
 
-### For sections with pagination:
+### For sections with pagination (check for pagination component):
 - `getNextPageButton()` - returns next page button
 - `getPreviousPageButton()` - returns previous page button
 - `clickNextPage()` - clicks next page
 - `clickPreviousPage()` - clicks previous page
-- `getPageInfo()` - returns current page info
 
-### For sections with charts/visualizations:
+### For sections with charts/visualizations (check for Chart/Plot components):
 - `getChart()` - returns chart container
 - `isChartVisible()` - checks chart visibility
-- `getChartLegend()` - returns legend items
 
-### For sections with external links:
+### For sections with external links (check for `<Link external`):
 - `getExternalLinks()` - returns all external link locators
-- `getExternalLinkByText(text)` - returns specific link
+
+### For sections with download button (check for `dataDownloader`):
+- `getDownloadButton()` - returns download button locator
 
 ## Naming Conventions
 
@@ -101,3 +115,4 @@ Use these patterns for data-testid selectors:
 3. Return Promises for action methods
 4. Include error handling with `.catch()` for optional elements
 5. Add appropriate timeouts for dynamic content
+6. **ONLY generate methods for elements that actually exist in the widget**
