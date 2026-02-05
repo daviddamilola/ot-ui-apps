@@ -14,7 +14,7 @@ import { applyDataTestIds } from './testid-applicator';
  * 
  * Pipeline:
  * 1. Analyze widget structure using LLM
- * 2. Apply data-testids using AST transformation
+ * 2. Apply data-testids using LLM analysis
  * 3. Load example files for few-shot learning
  * 4. Generate interactor code
  * 5. Generate test code
@@ -32,11 +32,11 @@ export async function generateTestsForWidget(
       console.log(`  Analysis: table=${analysis.hasTable}, chart=${analysis.hasChart}`);
     }
 
-    // Step 2: Apply data-testids
-    const dataTestIds = applyDataTestIds(widget, config);
+    // Step 2: Apply data-testids using LLM analysis
+    const dataTestIds = await applyDataTestIds(widget, config);
 
     if (config.verbose && dataTestIds.applied > 0) {
-      console.log(`  Added ${dataTestIds.applied} data-testid(s)`);
+      console.log(`  Added ${dataTestIds.applied} data-testid(s) via LLM analysis`);
     }
 
     // Step 3: Load examples

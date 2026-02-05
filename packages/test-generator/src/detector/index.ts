@@ -15,6 +15,9 @@ export {
 // Source file reading
 export {
   extractLocalImports,
+  extractUIPackageImports,
+  findUIComponentSource,
+  readUIComponentSources,
   resolveImportPath,
   readFileWithExtension,
   readWidgetSources,

@@ -102,8 +102,22 @@ jobs:
           
           echo "has_changes=true" >> $GITHUB_OUTPUT
           
+          # Determine the source branch (where widget changes were detected)
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            SOURCE_BRANCH="${{ inputs.target_branch }}"
+          else
+            SOURCE_BRANCH="${{ github.head_ref }}"
+          fi
+          echo "source_branch=$SOURCE_BRANCH" >> $GITHUB_OUTPUT
+          
+          # Create a new branch for generated tests
+          GENERATED_BRANCH="auto-tests/${SOURCE_BRANCH}-${{ github.run_number }}"
+          echo "generated_branch=$GENERATED_BRANCH" >> $GITHUB_OUTPUT
+          
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git checkout -b "$GENERATED_BRANCH"
           
           git add .
           git commit -m "chore: auto-generate tests for new widgets
@@ -112,23 +126,61 @@ jobs:
           
           Widgets: $(cat /tmp/widgets.json | jq -r '.[].name' | tr '\n' ', ' | sed 's/,$//')"
           
-          git push
+          git push origin "$GENERATED_BRANCH"
 
-      - name: Comment on original PR (manual dispatch)
-        if: github.event_name == 'workflow_dispatch' && inputs.pr_number != '' && steps.commit.outputs.has_changes == 'true'
+      - name: Create PR for generated tests
+        if: steps.commit.outputs.has_changes == 'true'
+        id: create_pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const generatedBranch = '${{ steps.commit.outputs.generated_branch }}';
+            const sourceBranch = '${{ steps.commit.outputs.source_branch }}';
+            const widgetsJson = `${{ steps.detect.outputs.widgets_json }}`;
+            const newWidgets = JSON.parse(widgetsJson || '[]');
+            const widgetList = newWidgets.map(w => `- **${w.name}** (${w.entity})`).join('\n');
+            const prNumber = '${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.pr_number }}';
+            
+            // Create PR from generated tests branch to the source branch
+            const pr = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🤖 Auto-generated tests for ${sourceBranch}`,
+              head: generatedBranch,
+              base: sourceBranch,
+              body: `## 🤖 Auto-Generated Tests\n\nThis PR contains auto-generated tests, interactors, and data-testid additions for new widgets${prNumber ? ' detected in #' + prNumber : ''}.\n\n### Detected Widgets\n${widgetList}\n\n### Generated Files\n- Interactors in \`packages/platform-test/POM/objects/widgets/\`\n- Test specs in \`packages/platform-test/e2e/pages/\`\n- Fixture updates in \`packages/platform-test/fixtures/testConfig.ts\`\n- Data-testid attributes added to source components\n\n> **Note:** Please review the generated tests and adjust as needed. The LLM-generated code may require fine-tuning based on actual component behavior and data availability.\n\n---\n_Merge this PR into \`${sourceBranch}\` to add the generated tests to your branch._`
+            });
+            
+            core.setOutput('pr_number', pr.data.number);
+            core.setOutput('pr_url', pr.data.html_url);
+            return pr.data;
+
+      - name: Comment on original PR
+        if: steps.commit.outputs.has_changes == 'true' && (github.event_name == 'pull_request' || inputs.pr_number != '')
         uses: actions/github-script@v7
         with:
           script: |
             const widgetsJson = `${{ steps.detect.outputs.widgets_json }}`;
             const newWidgets = JSON.parse(widgetsJson || '[]');
             const widgetList = newWidgets.map(w => `- **${w.name}** (${w.entity})`).join('\n');
-            const originalPrNumber = parseInt('${{ inputs.pr_number }}', 10);
+            const testPrUrl = '${{ steps.create_pr.outputs.pr_url }}';
+            const testPrNumber = '${{ steps.create_pr.outputs.pr_number }}';
             
-            github.rest.issues.createComment({
+            // Get the original PR number
+            let originalPrNumber;
+            if ('${{ github.event_name }}' === 'pull_request') {
+              originalPrNumber = ${{ github.event.pull_request.number || 0 }};
+            } else {
+              originalPrNumber = parseInt('${{ inputs.pr_number }}', 10);
+            }
+            
+            if (!originalPrNumber) return;
+            
+            await github.rest.issues.createComment({
               issue_number: originalPrNumber,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `## 🤖 Auto-Generated Tests Committed\n\nI detected the following new widgets/sections and generated tests for them:\n\n${widgetList}\n\n### Generated Files:\n- Interactors in \`packages/platform-test/POM/objects/widgets/\`\n- Test specs in \`packages/platform-test/e2e/pages/\`\n- Fixture updates in \`packages/platform-test/fixtures/testConfig.ts\`\n- Data-testid attributes added to source components\n\n> **Note:** The LLM-generated code may require fine-tuning based on actual component behavior and data availability.`
+              body: `## 🤖 Auto-Generated Tests Available\n\nI detected the following new widgets/sections and generated tests for them:\n\n${widgetList}\n\n### 📋 Review & Merge Generated Tests\n\nA separate PR has been created with the generated tests:\n\n**➡️ [PR #${testPrNumber}: Auto-generated tests](${testPrUrl})**\n\nPlease review the generated code and merge that PR into this branch to include the tests.\n\n### Generated Files\n- Interactors in \`packages/platform-test/POM/objects/widgets/\`\n- Test specs in \`packages/platform-test/e2e/pages/\`\n- Fixture updates in \`packages/platform-test/fixtures/testConfig.ts\`\n- Data-testid attributes added to source components\n\n> **Note:** The LLM-generated code may require fine-tuning based on actual component behavior and data availability.`
             });
 
       - name: Summary
@@ -156,6 +208,10 @@ jobs:
             
             if [ "${{ steps.commit.outputs.has_changes }}" = "true" ]; then
               echo "" >> $GITHUB_STEP_SUMMARY
-              echo "✅ Changes committed and pushed." >> $GITHUB_STEP_SUMMARY
+              echo "### Generated PR" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "✅ Created branch: \`${{ steps.commit.outputs.generated_branch }}\`" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "🔗 PR: ${{ steps.create_pr.outputs.pr_url }}" >> $GITHUB_STEP_SUMMARY
             fi
           fi

@@ -13,7 +13,7 @@ export {
 } from './prompt-formatter';
 
 // Widget analysis
-export { analyzeWidget } from './analyzer';
+export { analyzeWidget, analyzeDataTestIds, type DataTestIdAnalysis } from './analyzer';
 
 // Code generators
 export { generateInteractor, type InteractorExamples } from './interactor-generator';
