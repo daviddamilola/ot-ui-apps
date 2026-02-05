@@ -9,6 +9,15 @@ const EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx'];
 const MAIN_FILES = ['index', 'Body', 'Summary', 'Description'];
 
 /**
+ * Default paths for UI package components
+ */
+const UI_PACKAGE_PATHS = {
+  components: 'packages/ui/src/components',
+  providers: 'packages/ui/src/providers',
+  hooks: 'packages/ui/src/hooks',
+};
+
+/**
  * Extract local imports from a source file
  */
 export function extractLocalImports(sourceCode: string): string[] {
@@ -32,6 +41,119 @@ export function extractLocalImports(sourceCode: string): string[] {
   }
 
   return imports;
+}
+
+/**
+ * Extract imports from the "ui" package
+ */
+export function extractUIPackageImports(sourceCode: string): string[] {
+  if (!sourceCode) return [];
+
+  const imports: string[] = [];
+  
+  // Match: import { X, Y, Z } from "ui" or 'ui'
+  const uiImportRegex = /import\s+\{([^}]+)\}\s+from\s+['"]ui['"]/g;
+  
+  let match;
+  while ((match = uiImportRegex.exec(sourceCode)) !== null) {
+    const importList = match[1];
+    // Split by comma and clean up
+    const names = importList
+      .split(',')
+      .map(s => s.trim())
+      .filter(s => s && !s.includes(' as '));
+    imports.push(...names);
+  }
+
+  return imports;
+}
+
+/**
+ * Find a UI component's source file
+ */
+export function findUIComponentSource(
+  componentName: string,
+  workspaceRoot: string = process.cwd()
+): { content: string; path: string } | null {
+  // Check various possible locations
+  const searchPaths = [
+    // Direct component file
+    path.join(workspaceRoot, UI_PACKAGE_PATHS.components, `${componentName}.tsx`),
+    path.join(workspaceRoot, UI_PACKAGE_PATHS.components, `${componentName}.ts`),
+    // Component in folder
+    path.join(workspaceRoot, UI_PACKAGE_PATHS.components, componentName, 'index.tsx'),
+    path.join(workspaceRoot, UI_PACKAGE_PATHS.components, componentName, `${componentName}.tsx`),
+    // Provider
+    path.join(workspaceRoot, UI_PACKAGE_PATHS.providers, `${componentName}.tsx`),
+    path.join(workspaceRoot, UI_PACKAGE_PATHS.providers, `${componentName}.ts`),
+    // Provider in folder
+    path.join(workspaceRoot, UI_PACKAGE_PATHS.providers, componentName, 'index.tsx'),
+    path.join(workspaceRoot, UI_PACKAGE_PATHS.providers, componentName, `${componentName}.tsx`),
+    // Hooks
+    path.join(workspaceRoot, UI_PACKAGE_PATHS.hooks, `${componentName}.tsx`),
+    path.join(workspaceRoot, UI_PACKAGE_PATHS.hooks, `${componentName}.ts`),
+  ];
+
+  // Also check Section subfolder for Section-related components
+  if (componentName.includes('Section') || componentName === 'SectionItem' || componentName === 'SummaryItem') {
+    searchPaths.push(
+      path.join(workspaceRoot, UI_PACKAGE_PATHS.components, 'Section', `${componentName}.tsx`),
+      path.join(workspaceRoot, UI_PACKAGE_PATHS.components, 'Section', `${componentName}.ts`),
+      path.join(workspaceRoot, UI_PACKAGE_PATHS.components, 'Summary', `${componentName}.tsx`),
+    );
+  }
+
+  for (const searchPath of searchPaths) {
+    if (fs.existsSync(searchPath)) {
+      try {
+        return {
+          content: fs.readFileSync(searchPath, 'utf-8'),
+          path: searchPath,
+        };
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Read UI component sources for components used in widget
+ */
+export function readUIComponentSources(
+  widgetSources: Record<string, string>,
+  workspaceRoot: string = process.cwd()
+): Record<string, string> {
+  const uiComponentSources: Record<string, string> = {};
+  const allSourceCode = Object.values(widgetSources).join('\n');
+  
+  // Extract all UI package imports
+  const uiImports = extractUIPackageImports(allSourceCode);
+  
+  // Filter to components we might want to analyze (skip obvious MUI re-exports)
+  const muiComponents = new Set([
+    'Box', 'Grid', 'Stack', 'Paper', 'Container', 'Typography',
+    'Button', 'IconButton', 'Fab', 'TextField', 'Select', 'Checkbox',
+    'Table', 'TableBody', 'TableCell', 'TableHead', 'TableRow',
+    'List', 'ListItem', 'Card', 'CardContent', 'Divider',
+    'Dialog', 'DialogTitle', 'DialogContent', 'DialogActions',
+    'Tooltip', 'Popover', 'Menu', 'MenuItem', 'Tabs', 'Tab',
+    'CircularProgress', 'LinearProgress', 'Skeleton', 'Alert', 'Snackbar',
+  ]);
+
+  for (const componentName of uiImports) {
+    // Skip obvious MUI components
+    if (muiComponents.has(componentName)) continue;
+    
+    const source = findUIComponentSource(componentName, workspaceRoot);
+    if (source) {
+      uiComponentSources[`ui/${componentName}`] = source.content;
+    }
+  }
+
+  return uiComponentSources;
 }
 
 /**

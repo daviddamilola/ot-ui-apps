@@ -30,7 +30,6 @@ export {
   analyzeComponentForTestIds,
   buildTargetComponentsFromImports,
   buildTargetComponentsFromCode,
-  COMPONENT_PATTERNS,
   type TargetComponent,
   type TestIdSuggestion,
   type AnalysisResult,
