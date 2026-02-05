@@ -1,10 +1,15 @@
-name: "Auto-Generate Tests for New Widgets"
+name: Generate Tests for New Widgets
 
 on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'packages/sections/src/**'
+  
   workflow_dispatch:
     inputs:
       target_branch:
-        description: 'Branch to generate tests for (and create PR against)'
+        description: 'Branch to generate tests for'
         required: true
         type: string
       pr_number:
@@ -12,121 +17,145 @@ on:
         required: false
         type: string
 
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
-  detect-and-generate:
-    name: Detect New Widgets & Generate Tests
+  generate-tests:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-    
     steps:
-      - name: Checkout PR branch
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.target_branch }}
           fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.target_branch || github.head_ref }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'yarn'
 
-      - name: Enable Corepack
-        run: corepack enable
-
-      - name: Install dependencies
+      - name: Install workspace dependencies
         run: yarn install --frozen-lockfile
 
-      - name: Fetch main branch for comparison
-        run: git fetch origin main:main
-
-      - name: Detect new widgets and pages
-        id: detect
-        run: node ${{ github.workspace }}/.github/scripts/detect-new-widgets.js
-        env:
-          GITHUB_BASE_REF: main
-
-      - name: Generate tests and interactors
-        if: steps.detect.outputs.has_new_widgets == 'true'
-        run: node ${{ github.workspace }}/.github/scripts/generate-tests.js
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          NEW_WIDGETS_JSON: ${{ steps.detect.outputs.new_widgets }}
-
-      - name: Check for generated files
-        id: check_files
+      - name: Build test-generator package
         run: |
-          if [[ -n $(git status --porcelain) ]]; then
-            echo "has_changes=true" >> $GITHUB_OUTPUT
-            echo "Changed files:"
-            git status --porcelain
+          cd packages/test-generator
+          yarn build
+
+      - name: Fetch base branch for comparison
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            git fetch origin main:main
+            echo "BASE_BRANCH=main" >> $GITHUB_ENV
           else
-            echo "has_changes=false" >> $GITHUB_OUTPUT
+            git fetch origin ${{ github.base_ref }}:${{ github.base_ref }}
+            echo "BASE_BRANCH=origin/${{ github.base_ref }}" >> $GITHUB_ENV
           fi
 
-      - name: Create branch and PR with generated tests
-        if: steps.check_files.outputs.has_changes == 'true'
-        id: create_pr
+      - name: Detect new widgets
+        id: detect
         run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
+          cd packages/test-generator
+          node dist/cli.js detect \
+            --base-branch ${{ env.BASE_BRANCH }} \
+            --output-file /tmp/widgets.json \
+            --verbose
           
-          # Create a new branch for generated tests
-          GENERATED_BRANCH="auto-tests/${{ inputs.target_branch }}-${{ github.run_number }}"
-          git checkout -b "$GENERATED_BRANCH"
-          
-          git add ${{ github.workspace }}/packages/platform-test/
-          git commit -m "🤖 Auto-generated tests, interactors, and fixture updates for new widgets"
-          git push origin "$GENERATED_BRANCH"
-          
-          echo "generated_branch=$GENERATED_BRANCH" >> $GITHUB_OUTPUT
+          if [ -f /tmp/widgets.json ]; then
+            COUNT=$(cat /tmp/widgets.json | jq 'length')
+            echo "count=$COUNT" >> $GITHUB_OUTPUT
+            WIDGETS_JSON=$(cat /tmp/widgets.json)
+            echo "widgets_json<<EOF" >> $GITHUB_OUTPUT
+            echo "$WIDGETS_JSON" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            echo "📦 Found $COUNT new widget(s)"
+          else
+            echo "count=0" >> $GITHUB_OUTPUT
+            echo "widgets_json=[]" >> $GITHUB_OUTPUT
+            echo "✅ No new widgets detected"
+          fi
 
-      - name: Create PR for generated tests
-        if: steps.check_files.outputs.has_changes == 'true'
-        id: create_test_pr
+      - name: Generate tests
+        id: generate
+        if: steps.detect.outputs.count > 0
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          cd packages/test-generator
+          node dist/cli.js generate \
+            --widgets-file /tmp/widgets.json \
+            --verbose
+
+      - name: Commit generated files
+        if: steps.detect.outputs.count > 0
+        id: commit
+        run: |
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "No changes to commit"
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          echo "has_changes=true" >> $GITHUB_OUTPUT
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add .
+          git commit -m "chore: auto-generate tests for new widgets
+
+          Generated by test-generator package.
+          
+          Widgets: $(cat /tmp/widgets.json | jq -r '.[].name' | tr '\n' ', ' | sed 's/,$//')"
+          
+          git push
+
+      - name: Comment on original PR (manual dispatch)
+        if: github.event_name == 'workflow_dispatch' && inputs.pr_number != '' && steps.commit.outputs.has_changes == 'true'
         uses: actions/github-script@v7
         with:
           script: |
-            const generatedBranch = '${{ steps.create_pr.outputs.generated_branch }}';
-            const targetBranch = '${{ inputs.target_branch }}';
-            const prNumber = '${{ inputs.pr_number }}';
-            
-            // Create PR from generated tests branch to the original PR branch
-            const pr = await github.rest.pulls.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: '🤖 Auto-generated tests for ' + targetBranch,
-              head: generatedBranch,
-              base: targetBranch,
-              body: `## 🤖 Auto-Generated Tests\n\nThis PR contains auto-generated tests, interactors, and fixture updates for new widgets${prNumber ? ' detected in #' + prNumber : ''}.\n\n### Generated Files:\n- Interactors in \`packages/platform-test/POM/objects/widgets/\`\n- Test specs in \`packages/platform-test/e2e/pages/\`\n- Fixture updates in \`packages/platform-test/fixtures/testConfig.ts\`\n\n> **Note:** Please review the generated tests and adjust as needed. The LLM-generated code may require fine-tuning based on actual component behavior and data availability.\n\n---\n_Merge this PR to add the generated tests to your branch._`
-            });
-            
-            core.setOutput('pr_number', pr.data.number);
-            core.setOutput('pr_url', pr.data.html_url);
-            return pr.data;
-
-      - name: Comment on original PR with link
-        if: steps.check_files.outputs.has_changes == 'true' && inputs.pr_number != ''
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const newWidgets = JSON.parse(process.env.NEW_WIDGETS_JSON || '[]');
+            const widgetsJson = `${{ steps.detect.outputs.widgets_json }}`;
+            const newWidgets = JSON.parse(widgetsJson || '[]');
             const widgetList = newWidgets.map(w => `- **${w.name}** (${w.entity})`).join('\n');
-            const testPrUrl = '${{ steps.create_test_pr.outputs.pr_url }}';
-            const testPrNumber = '${{ steps.create_test_pr.outputs.pr_number }}';
             const originalPrNumber = parseInt('${{ inputs.pr_number }}', 10);
             
             github.rest.issues.createComment({
               issue_number: originalPrNumber,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `## 🤖 Auto-Generated Tests Available\n\nI detected the following new widgets/sections and generated tests for them:\n\n${widgetList}\n\n### 📋 Review & Merge Generated Tests\n\nA separate PR has been created with the generated tests:\n\n**➡️ [PR #${testPrNumber}: Auto-generated tests](${testPrUrl})**\n\nPlease review the generated code and merge that PR into this branch to include the tests.\n\n### Generated Files:\n- Interactors in \`packages/platform-test/POM/objects/widgets/\`\n- Test specs in \`packages/platform-test/e2e/pages/\`\n- Fixture updates in \`packages/platform-test/fixtures/testConfig.ts\`\n\n> **Note:** The LLM-generated code may require fine-tuning based on actual component behavior and data availability.`
+              body: `## 🤖 Auto-Generated Tests Committed\n\nI detected the following new widgets/sections and generated tests for them:\n\n${widgetList}\n\n### Generated Files:\n- Interactors in \`packages/platform-test/POM/objects/widgets/\`\n- Test specs in \`packages/platform-test/e2e/pages/\`\n- Fixture updates in \`packages/platform-test/fixtures/testConfig.ts\`\n- Data-testid attributes added to source components\n\n> **Note:** The LLM-generated code may require fine-tuning based on actual component behavior and data availability.`
             });
-        env:
-          NEW_WIDGETS_JSON: ${{ steps.detect.outputs.new_widgets }}
 
-      - name: No new widgets detected
-        if: steps.detect.outputs.has_new_widgets != 'true'
-        run: echo "No new widgets or pages detected in this PR."
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Test Generation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "**Trigger:** Manual dispatch for branch \`${{ inputs.target_branch }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ "${{ steps.detect.outputs.count }}" = "0" ]; then
+            echo "✅ No new widgets detected." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "📦 **Widgets detected:** ${{ steps.detect.outputs.count }}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            if [ -f /tmp/widgets.json ]; then
+              echo "### Detected Widgets" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              cat /tmp/widgets.json | jq -r '.[] | "- **\(.name)** (\(.entity))"' >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            if [ "${{ steps.commit.outputs.has_changes }}" = "true" ]; then
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "✅ Changes committed and pushed." >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
