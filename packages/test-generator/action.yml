@@ -1,0 +1,149 @@
+name: 'Test Generator'
+description: 'Generate Playwright tests and interactors for new UI widgets using LLM + AST analysis'
+author: 'Open Targets Platform'
+branding:
+  icon: 'code'
+  color: 'purple'
+
+inputs:
+  anthropic-api-key:
+    description: 'Anthropic API key for Claude'
+    required: true
+  github-token:
+    description: 'GitHub token for PR access'
+    required: false
+    default: ${{ github.token }}
+  base-branch:
+    description: 'Base branch to compare against'
+    required: false
+    default: 'main'
+  skip-data-testids:
+    description: 'Skip adding data-testid attributes'
+    required: false
+    default: 'false'
+  dry-run:
+    description: 'Run without writing files'
+    required: false
+    default: 'false'
+  commit-changes:
+    description: 'Commit changes back to the PR branch'
+    required: false
+    default: 'true'
+  commit-message:
+    description: 'Commit message for generated files'
+    required: false
+    default: 'chore: auto-generate tests for new widgets'
+
+outputs:
+  widgets-detected:
+    description: 'Number of new widgets detected'
+    value: ${{ steps.detect.outputs.count }}
+  tests-generated:
+    description: 'Number of tests successfully generated'
+    value: ${{ steps.generate.outputs.success-count }}
+  tests-failed:
+    description: 'Number of tests that failed to generate'
+    value: ${{ steps.generate.outputs.fail-count }}
+  modified-files:
+    description: 'JSON array of modified source files (data-testids)'
+    value: ${{ steps.generate.outputs.modified-files }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        cd ${{ github.action_path }}
+        npm ci
+
+    - name: Build package
+      shell: bash
+      run: |
+        cd ${{ github.action_path }}
+        npm run build
+
+    - name: Detect new widgets
+      id: detect
+      shell: bash
+      run: |
+        cd ${{ github.workspace }}
+        
+        # Run detection
+        OUTPUT=$(node ${{ github.action_path }}/dist/cli.js detect \
+          --base-branch ${{ inputs.base-branch }} \
+          --output-file /tmp/widgets.json \
+          --verbose)
+        
+        echo "$OUTPUT"
+        
+        # Count widgets
+        if [ -f /tmp/widgets.json ]; then
+          COUNT=$(jq 'length' /tmp/widgets.json)
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
+        else
+          echo "count=0" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Generate tests
+      id: generate
+      if: steps.detect.outputs.count > 0
+      shell: bash
+      env:
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+      run: |
+        cd ${{ github.workspace }}
+        
+        ARGS="--widgets-file /tmp/widgets.json --verbose"
+        
+        if [ "${{ inputs.skip-data-testids }}" = "true" ]; then
+          ARGS="$ARGS --skip-data-testids"
+        fi
+        
+        if [ "${{ inputs.dry-run }}" = "true" ]; then
+          ARGS="$ARGS --dry-run"
+        fi
+        
+        # Run generation and capture output
+        OUTPUT=$(node ${{ github.action_path }}/dist/cli.js generate $ARGS 2>&1) || true
+        
+        echo "$OUTPUT"
+        
+        # Parse results from output
+        SUCCESS=$(echo "$OUTPUT" | grep -c "✅ Success" || echo "0")
+        FAIL=$(echo "$OUTPUT" | grep -c "❌ Failed" || echo "0")
+        
+        echo "success-count=$SUCCESS" >> $GITHUB_OUTPUT
+        echo "fail-count=$FAIL" >> $GITHUB_OUTPUT
+        
+        # Get modified files
+        MODIFIED=$(git diff --name-only 2>/dev/null | jq -R -s -c 'split("\n") | map(select(length > 0))' || echo "[]")
+        echo "modified-files=$MODIFIED" >> $GITHUB_OUTPUT
+
+    - name: Commit changes
+      if: inputs.commit-changes == 'true' && steps.detect.outputs.count > 0 && inputs.dry-run != 'true'
+      shell: bash
+      run: |
+        cd ${{ github.workspace }}
+        
+        # Check for changes
+        if [ -z "$(git status --porcelain)" ]; then
+          echo "No changes to commit"
+          exit 0
+        fi
+        
+        # Configure git
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        
+        # Stage and commit
+        git add .
+        git commit -m "${{ inputs.commit-message }}"
+        
+        # Push to PR branch
+        git push
