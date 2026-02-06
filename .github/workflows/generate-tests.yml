@@ -2,7 +2,7 @@ name: Generate Tests for New Widgets
 
 on:
   pull_request:
-    types: [opened, synchronize]
+    types: [opened]
     paths:
       - 'packages/sections/src/**'
   
@@ -132,23 +132,74 @@ jobs:
         if: steps.commit.outputs.has_changes == 'true'
         id: create_pr
         uses: actions/github-script@v7
+        env:
+          WIDGETS_JSON: ${{ steps.detect.outputs.widgets_json }}
+          GENERATED_BRANCH: ${{ steps.commit.outputs.generated_branch }}
+          SOURCE_BRANCH: ${{ steps.commit.outputs.source_branch }}
+          ORIGINAL_PR_NUMBER: ${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.pr_number }}
         with:
           script: |
-            const generatedBranch = '${{ steps.commit.outputs.generated_branch }}';
-            const sourceBranch = '${{ steps.commit.outputs.source_branch }}';
-            const widgetsJson = `${{ steps.detect.outputs.widgets_json }}`;
-            const newWidgets = JSON.parse(widgetsJson || '[]');
+            const generatedBranch = process.env.GENERATED_BRANCH;
+            const sourceBranch = process.env.SOURCE_BRANCH;
+            const widgetsJson = process.env.WIDGETS_JSON || '[]';
+            const newWidgets = JSON.parse(widgetsJson);
             const widgetList = newWidgets.map(w => `- **${w.name}** (${w.entity})`).join('\n');
-            const prNumber = '${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.pr_number }}';
+            const widgetNames = newWidgets.map(w => w.name).join(', ');
+            const prNumber = process.env.ORIGINAL_PR_NUMBER;
             
+            const prBodyLines = [
+              '# [Platform-test]: Auto-generated tests for new widgets',
+              '',
+              '## Description',
+              '',
+              `This PR contains auto-generated Playwright tests, Page Object Model interactors, and data-testid attributes for new widgets${prNumber ? ' detected in #' + prNumber : ''}.`,
+              '',
+              `**Widgets:** ${widgetNames}`,
+              `**Source Branch:** \`${sourceBranch}\``,
+              '',
+              '## Type of change',
+              '',
+              '- [x] New feature (non-breaking change which adds functionality)',
+              '',
+              '## Generated Files',
+              '',
+              '### Detected Widgets',
+              widgetList,
+              '',
+              '### Files Added/Modified',
+              '- Interactors in `packages/platform-test/POM/objects/widgets/`',
+              '- Test specs in `packages/platform-test/e2e/pages/`',
+              '- Fixture updates in `packages/platform-test/fixtures/testConfig.ts`',
+              '- Data-testid attributes added to source components',
+              '',
+              '## How Has This Been Tested?',
+              '',
+              '- [ ] Run the generated Playwright tests locally',
+              '- [ ] Verify data-testid attributes are correctly placed in the DOM',
+              '',
+              '## Checklist:',
+              '',
+              '- [x] I have commented my code, particularly in hard-to-understand areas',
+              '- [ ] My changes generate no new warnings',
+              '- [x] I have made corresponding changes to the documentation',
+              '',
+              '---',
+              '',
+              '> **Note:** Please review the generated tests and adjust as needed. The LLM-generated code may require fine-tuning based on actual component behavior and data availability.',
+              '',
+              `_Merge this PR into \`${sourceBranch}\` to add the generated tests to your branch._`
+            ];
+            
+            const prBody = prBodyLines.join('\n');
+
             // Create PR from generated tests branch to the source branch
             const pr = await github.rest.pulls.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `🤖 Auto-generated tests for ${sourceBranch}`,
+              title: `[Platform-test]: Auto-generated tests for ${widgetNames}`,
               head: generatedBranch,
               base: sourceBranch,
-              body: `## 🤖 Auto-Generated Tests\n\nThis PR contains auto-generated tests, interactors, and data-testid additions for new widgets${prNumber ? ' detected in #' + prNumber : ''}.\n\n### Detected Widgets\n${widgetList}\n\n### Generated Files\n- Interactors in \`packages/platform-test/POM/objects/widgets/\`\n- Test specs in \`packages/platform-test/e2e/pages/\`\n- Fixture updates in \`packages/platform-test/fixtures/testConfig.ts\`\n- Data-testid attributes added to source components\n\n> **Note:** Please review the generated tests and adjust as needed. The LLM-generated code may require fine-tuning based on actual component behavior and data availability.\n\n---\n_Merge this PR into \`${sourceBranch}\` to add the generated tests to your branch._`
+              body: prBody
             });
             
             core.setOutput('pr_number', pr.data.number);
@@ -158,10 +209,12 @@ jobs:
       - name: Comment on original PR
         if: steps.commit.outputs.has_changes == 'true' && (github.event_name == 'pull_request' || inputs.pr_number != '')
         uses: actions/github-script@v7
+        env:
+          WIDGETS_JSON: ${{ steps.detect.outputs.widgets_json }}
         with:
           script: |
-            const widgetsJson = `${{ steps.detect.outputs.widgets_json }}`;
-            const newWidgets = JSON.parse(widgetsJson || '[]');
+            const widgetsJson = process.env.WIDGETS_JSON || '[]';
+            const newWidgets = JSON.parse(widgetsJson);
             const widgetList = newWidgets.map(w => `- **${w.name}** (${w.entity})`).join('\n');
             const testPrUrl = '${{ steps.create_pr.outputs.pr_url }}';
             const testPrNumber = '${{ steps.create_pr.outputs.pr_number }}';
