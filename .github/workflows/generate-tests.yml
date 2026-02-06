@@ -2,7 +2,7 @@ name: Generate Tests for New Widgets
 
 on:
   pull_request:
-    types: [opened, synchronize]
+    types: [opened]
     paths:
       - 'packages/sections/src/**'
   
@@ -132,12 +132,14 @@ jobs:
         if: steps.commit.outputs.has_changes == 'true'
         id: create_pr
         uses: actions/github-script@v7
+        env:
+          WIDGETS_JSON: ${{ steps.detect.outputs.widgets_json }}
         with:
           script: |
             const generatedBranch = '${{ steps.commit.outputs.generated_branch }}';
             const sourceBranch = '${{ steps.commit.outputs.source_branch }}';
-            const widgetsJson = `${{ steps.detect.outputs.widgets_json }}`;
-            const newWidgets = JSON.parse(widgetsJson || '[]');
+            const widgetsJson = process.env.WIDGETS_JSON || '[]';
+            const newWidgets = JSON.parse(widgetsJson);
             const widgetList = newWidgets.map(w => `- **${w.name}** (${w.entity})`).join('\n');
             const prNumber = '${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.pr_number }}';
             
@@ -158,10 +160,12 @@ jobs:
       - name: Comment on original PR
         if: steps.commit.outputs.has_changes == 'true' && (github.event_name == 'pull_request' || inputs.pr_number != '')
         uses: actions/github-script@v7
+        env:
+          WIDGETS_JSON: ${{ steps.detect.outputs.widgets_json }}
         with:
           script: |
-            const widgetsJson = `${{ steps.detect.outputs.widgets_json }}`;
-            const newWidgets = JSON.parse(widgetsJson || '[]');
+            const widgetsJson = process.env.WIDGETS_JSON || '[]';
+            const newWidgets = JSON.parse(widgetsJson);
             const widgetList = newWidgets.map(w => `- **${w.name}** (${w.entity})`).join('\n');
             const testPrUrl = '${{ steps.create_pr.outputs.pr_url }}';
             const testPrNumber = '${{ steps.create_pr.outputs.pr_number }}';
