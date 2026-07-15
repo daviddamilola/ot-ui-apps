@@ -40,6 +40,7 @@ function DrugsTable({ ensemblId, rows, selectedRow, selectRow, loading }) {
 
         return (
           <Box
+            data-testid="drugs-table-container"
             sx={{
               p: "0.5rem 0.5rem 0.5rem 1rem",
               borderWidth: "0 0 0 4px",
@@ -55,8 +56,7 @@ function DrugsTable({ ensemblId, rows, selectedRow, selectRow, loading }) {
                   visibility: "visible",
                 },
               },
-            }}
-          >
+            }}>
             <Typography
               variant={"h6"}
               sx={{
@@ -77,7 +77,6 @@ function DrugsTable({ ensemblId, rows, selectedRow, selectRow, loading }) {
                 </Link>
               </span>
             </Typography>
-
             <Box
               sx={{
                 display: "flex",

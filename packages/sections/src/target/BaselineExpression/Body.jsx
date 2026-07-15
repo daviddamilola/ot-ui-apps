@@ -54,19 +54,28 @@ function Section({ id: ensgId, label: symbol, entity, viewMode, expandSpecificit
       renderBody={() => (
         <Fragment key={crypto.randomUUID()}>
           <Tabs value={tab} onChange={handleChangeTab} style={{ marginBottom: "1rem" }}>
-            <Tab value="summary" label="Summary" />
-            <Tab value="gtex" label="Variation (GTEx)" />
+            <Tab
+              data-testid="baselineExpression-tab-summary"
+              value="summary"
+              label="Summary" />
+            <Tab
+              data-testid="baselineExpression-tab-gtex"
+              value="gtex"
+              label="Variation (GTEx)" />
           </Tabs>
           {tab === "summary" &&
             <SummaryTab
+              data-testid="baselineExpression-summary-tab-content"
               symbol={symbol}
               ensgId={ensgId}
               data={request.data}
               viewMode={viewMode}
-              expandSpecificity={expandSpecificity}
-            />
+              expandSpecificity={expandSpecificity} />
           }
-          {tab === "gtex" && <GtexTab symbol={symbol} data={request.data} />}
+          {tab === "gtex" && <GtexTab
+            data-testid="baselineExpression-gtex-tab-content"
+            symbol={symbol}
+            data={request.data} />}
         </Fragment>
       )}
     />

@@ -47,7 +47,8 @@ function IndicationsTable({
         } = row;
         const isSelected = selectedRow?.id && row.id === selectedRow.id;       
         return (
-          <Box 
+          <Box
+            data-testid="Indications-table-container"
             sx={{ 
               p: "0.5rem 0.5rem 0.5rem 1rem",
               borderWidth: "0 0 0 4px",
@@ -63,8 +64,7 @@ function IndicationsTable({
                   visibility: "visible",
                 },
               }
-            }}
-          >
+            }}>
             {/* Top: Indication link as title */}
             <Typography
               variant="h6"
@@ -86,7 +86,6 @@ function IndicationsTable({
                 </Link>
               </span>
             </Typography>
-
             {/* Bottom section with max phase and record count */}
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               {/* Bottom left: Max clinical stage */}
