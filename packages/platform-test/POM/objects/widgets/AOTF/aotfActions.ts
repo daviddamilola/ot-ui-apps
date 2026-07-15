@@ -1,5 +1,25 @@
 import type { Locator, Page } from "@playwright/test";
 
+/**
+ * Interactor for AOTF (Association On-The-Fly) table action controls.
+ *
+ * Provides methods to interact with the AOTF table's control panel including:
+ * - Name filtering
+ * - Advanced facets/filters
+ * - Column options and weight controls
+ * - Export functionality
+ * - Display mode switching (Associations/Prioritisation view)
+ *
+ * @example
+ * ```typescript
+ * const actions = new AotfActions(page);
+ * await actions.searchByName("BRAF");
+ * await actions.switchToPrioritisationView();
+ * await actions.openExportMenu();
+ * ```
+ *
+ * @category AOTF
+ */
 export class AotfActions {
   page: Page;
 
@@ -82,7 +102,7 @@ export class AotfActions {
   }
 
   getWeightsControlsContainer(): Locator {
-    return this.page.locator(".weights-controlls");
+    return this.page.locator("[data-testid='weights-controls-container']");
   }
 
   async isColumnOptionsActive(): Promise<boolean> {

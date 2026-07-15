@@ -1,7 +1,10 @@
 fragment DrugProfileHeaderFragment on Drug {
   description
   drugType
-  synonyms
+  synonyms {
+    label
+    source
+  }
   parentMolecule {
     id
     name
@@ -10,10 +13,9 @@ fragment DrugProfileHeaderFragment on Drug {
     id
     name
   }
-  isApproved
-  hasBeenWithdrawn
-  blackBoxWarning
-  maximumClinicalTrialPhase
-  tradeNames
-  yearOfFirstApproval
+  maximumClinicalStage
+  tradeNames {
+    label
+    source
+  }
 }

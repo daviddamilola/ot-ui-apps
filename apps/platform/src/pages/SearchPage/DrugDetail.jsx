@@ -1,7 +1,9 @@
 import { CardContent, Typography } from "@mui/material";
+import { ProfileChipList } from "ui";
 import { makeStyles } from "@mui/styles";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faPrescriptionBottleAlt, faTriangleExclamation } from "@fortawesome/free-solid-svg-icons";
+import { faPrescriptionBottleAlt } from "@fortawesome/free-solid-svg-icons";
+import { parseDrugLabels } from "@ot/utils";
 
 import { LongText, Chip, Link, LongList } from "ui";
 
@@ -29,20 +31,15 @@ function DrugDetail({ data }) {
         <FontAwesomeIcon icon={faPrescriptionBottleAlt} /> Drug
       </Typography>
       <LongText lineLimit={4}>{data.description}</LongText>
-      {data.hasBeenWithdrawn ? (
-        <Typography variant="subtitle2" color="secondary">
-          <FontAwesomeIcon icon={faTriangleExclamation} className={classes.warningIcon} /> Withdrawn
-          Drug
-        </Typography>
-      ) : null}
+
       <Typography className={classes.subtitle} variant="subtitle1">
         Drug Type
       </Typography>
       <Typography variant="body2">{data.drugType}</Typography>
       <Typography className={classes.subtitle} variant="subtitle1">
-        Maximum Clinical Trial Phase
+        Maximum Clinical Stage
       </Typography>
-      <Typography variant="body2">{data.maximumClinicalTrialPhase}</Typography>
+      <Typography variant="body2">{data.maximumClinicalStage}</Typography>
       {data.indications && data.indications.rows.length > 0 && (
         <>
           <Typography className={classes.subtitle} variant="subtitle1">
@@ -59,45 +56,15 @@ function DrugDetail({ data }) {
           />
         </>
       )}
-      {data.linkedTargets.rows.length > 0 && (
-        <>
-          <Typography className={classes.subtitle} variant="subtitle1">
-            Drug targets
-          </Typography>
-          <LongList
-            terms={data.linkedTargets.rows}
-            maxTerms={5}
-            render={target => (
-              <Link className={classes.link} key={target.id} to={`/target/${target.id}`}>
-                {target.approvedSymbol}
-              </Link>
-            )}
-          />
-        </>
-      )}
       {data.synonyms.length > 0 && (
-        <>
-          <Typography className={classes.subtitle} variant="subtitle1">
-            Synonyms
-          </Typography>
-          <LongList
-            terms={data.synonyms}
-            maxTerms={5}
-            render={synonym => <Chip key={synonym} title={synonym} label={synonym} />}
-          />
-        </>
+        <ProfileChipList title="Synonyms" maxTerms={5} titleVariant="subtitle1">
+          {parseDrugLabels(data.synonyms)}
+        </ProfileChipList>
       )}
       {data.tradeNames.length > 0 && (
-        <>
-          <Typography className={classes.subtitle} variant="subtitle1">
-            Trade names
-          </Typography>
-          <LongList
-            terms={data.tradeNames}
-            maxTerms={5}
-            render={tradeName => <Chip key={tradeName} title={tradeName} label={tradeName} />}
-          />
-        </>
+        <ProfileChipList title="Trade names" maxTerms={5} titleVariant="subtitle1">
+          {parseDrugLabels(data.tradeNames)}
+        </ProfileChipList>
       )}
     </CardContent>
   );

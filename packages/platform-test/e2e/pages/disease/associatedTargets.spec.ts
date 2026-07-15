@@ -327,7 +327,8 @@ test.describe("Disease Page", () => {
 
       // Map prioritization column IDs to their section IDs
       const prioritizationColumnToSection: Record<string, string> = {
-        maxClinicalTrialPhase: "knownDrugs",
+        maxClinicalTrialPhase: "drugs",
+        maxClinicalStage: "drugs",
         isInMembrane: "subcellularLocation",
         isSecreted: "subcellularLocation",
         hasLigand: "tractability",
@@ -343,6 +344,8 @@ test.describe("Disease Page", () => {
         paralogMaxIdentityPercentage: "compGenomics",
         tissueSpecificity: "expressions",
         tissueDistribution: "expressions",
+        celltypeSpecificity: "expressions",
+        celltypeDistribution: "expressions",
       };
 
       if (genesToTest.length === 0) {
