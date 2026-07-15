@@ -133,7 +133,7 @@ export interface TestGeneratorConfig {
 
 export const DEFAULT_CONFIG: Required<TestGeneratorConfig> = {
   anthropicApiKey: '',
-  model: 'claude-sonnet-4-20250514',
+  model: 'claude-sonnet-4-6',
   maxTokens: 4096,
   sectionsPath: 'packages/sections/src',
   interactorOutputPath: 'packages/platform-test/POM/objects/widgets',
